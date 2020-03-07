@@ -44,7 +44,7 @@ def EvaluateFace(aFace, aShape):
     # line intersection with the shape
     # line passes through centers
     # length of line is shape diagonal
-
+    
     # estimating shape diagonals from bounding box
     lineLength = aShape.BoundBox.DiagonalLength
     
@@ -52,12 +52,12 @@ def EvaluateFace(aFace, aShape):
     for c in centerList:
         holeCenter = c.add(holeCenter)
     holeCenter.multiply(1.0/len(centerList))
-
+    
     holeAxis = FreeCAD.Vector(0,0,0)
     for a  in axisList:
         holeAxis = a.add(holeAxis)
     holeAxis.multiply(1.0/len(axisList))
-
+    
     p1 = FreeCAD.Vector(0,0,0)
     p2 = FreeCAD.Vector(0,0,0)
     if(len(centerList) > 1):
@@ -68,7 +68,7 @@ def EvaluateFace(aFace, aShape):
         vecP12 = centerList[1] - centerList[0]
         vecP12.normalize()
         p2 = centerList[1] + vecP12.multiply(lineLength)
-
+    
     else:
         aVec = axisList[0]
         aVec.normalize()
@@ -76,10 +76,10 @@ def EvaluateFace(aFace, aShape):
         aVec = axisList[0]
         aVec.normalize()
         p2 = centerList[0] + aVec.multiply(lineLength)
-
+    
     line=Part.makeLine(p1,p2)
     Part.show(line)
-
+    
     # estimate intersection
     intersect = aShape.common(line)
     nLeft = 0
@@ -96,18 +96,17 @@ def EvaluateFace(aFace, aShape):
             # intersect happened both sides
             # propably a closed tube
             isHole = False
-
+    
     return isHole
 
 
-
 # get the active document
-doc =FreeCAD.ActiveDocument
+doc = FreeCAD.ActiveDocument
 # objects present in the doc
 objects = doc.Objects
-
+    
 # loop thorugh all objects
-
+    
 faceCount = 0
 for obj in objects:
     if("Part::PartFeature" in str(obj)):
@@ -132,8 +131,8 @@ for obj in objects:
                         curve = edge.Curve
                         # print("Looking for circle/Ellipse :", curve)
                         # if("Circle" in str(curve) or "Ellipse" in str(curve)):
-                        if isClosedCurve(curve):
-                            if(len(edge.Vertexes) == 1):
+                        if IsClosedCurve(curve):
+                            if(len(edge.Vertexes) < 2):
                                 # print("Found closed curve")
                                 boundaryCurves.append(curve)
                         
