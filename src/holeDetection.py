@@ -1,3 +1,4 @@
+import copy
 import FreeCAD
 import FreeCADGui
 import Part
@@ -21,6 +22,17 @@ def GetAxisOfBspline(iCurve):
     crossProd.normalize()
     return crossProd
 
+def GetCenterOfBspline(iCurve):
+    points = iCurve.discretize(Number=10)
+    center = FreeCAD.Vector(0,0,0)
+    for point in points:
+        center = center + point
+    center = center / len(points)
+    return(center)
+
+def GetBoundaryEdges(iFace):
+    edges = iFace.Edges
+
 
 def EvaluateFace(aFace, aShape):
     isHole = True
@@ -32,14 +44,33 @@ def EvaluateFace(aFace, aShape):
         curve = edge.Curve
         if(IsClosedCurve(curve)):
             curves.append(curve)
-            center = curve.centerOfCurvature(0)
-            centerList.append(center)
+            center = FreeCAD.Vector(0,0,0)
             axis = FreeCAD.Vector(1,0,0)
             if "BSpline" in str(curve):
+                center = GetCenterOfBspline(curve)
                 axis = GetAxisOfBspline(curve)
             else:
+                center = curve.centerOfCurvature(0)
                 axis = curve.Axis
             axisList.append(axis)
+            centerList.append(center)
+    
+    if len(centerList) > 1:
+        centerListCopy = copy.deepcopy(centerList)
+        centerList.clear()
+        for cc in centerListCopy:
+            found = False
+            for c in centerList:
+                if cc.distanceToPoint(c) < 1E-3:
+                    found = True
+                    break
+            if found == False :
+                centerList.append(cc)
+    else:
+        centerList.append(aFace.Surface.Center)
+        axisList.append(aFace.Surface.Axis)
+                    
+    # filter unique centers
     
     # line intersection with the shape
     # line passes through centers
@@ -78,25 +109,39 @@ def EvaluateFace(aFace, aShape):
         p2 = centerList[0] + aVec.multiply(lineLength)
     
     line=Part.makeLine(p1,p2)
-    Part.show(line)
+    # Part.show(line)
     
     # estimate intersection
     intersect = aShape.common(line)
     nLeft = 0
     nRight = 0
+    avgCenter = FreeCAD.Vector(0,0,0)
+    for c in centerList:
+        avgCenter = avgCenter + c
+    avgCenter = avgCenter / len(centerList)
+    
+    interPoints = []
     for inVert in intersect.Vertexes:
         point = inVert.Point
-        distLeft = point.distanceToPoint(centerList[0])
-        distRight = point.distanceToPoint(centerList[1])
-        if distLeft < distRight:
-            nLeft = nLeft + 1
-        else:
-            nRight = nRight + 1
+        interPoints.append(point)
+    
+    if len(interPoints) > 0:
+        dir = interPoints[0] - avgCenter
+        for intPnt in interPoints:
+            vec = intPnt - avgCenter
+            if vec.dot(dir) < 0.0:
+                nLeft = nLeft + 1
+            else:
+                nRight = nRight + 1
+        
         if(nLeft > 0 and nRight > 0): 
             # intersect happened both sides
             # propably a closed tube
+            print("Not a hole")
             isHole = False
-    
+    else:
+        isHole = True
+        
     return isHole
 
 
@@ -107,44 +152,30 @@ objects = doc.Objects
     
 # loop thorugh all objects
     
-faceCount = 0
+nHoles = 0
 for obj in objects:
     if("Part::PartFeature" in str(obj)):
         parentColor = obj.ViewObject.DiffuseColor
         cylinderColor = (0.0,1.0,0.0)
         colors = []
         aShape = obj.Shape
+        aShape.removeSplitter()
         shapeType = aShape.ShapeType
         if(shapeType == 'Solid'): # only for solid
             faces = aShape.Faces
-            isFaceSelected = False
-            for face in faces:
+            for face in faces: 
+                isFaceSelected = False
                 surf = face.Surface
-                nEdges = len(edges)
                 wires = face.Wires
                 nWires = len(wires)
                 if (str(surf) in "<Cylinder object>"):
-                    # print("surf : ",surf)
-                    edges = face.Edges
-                    boundaryCurves = []
-                    for edge in edges:
-                        curve = edge.Curve
-                        # print("Looking for circle/Ellipse :", curve)
-                        # if("Circle" in str(curve) or "Ellipse" in str(curve)):
-                        if IsClosedCurve(curve):
-                            if(len(edge.Vertexes) < 2):
-                                # print("Found closed curve")
-                                boundaryCurves.append(curve)
-                        
-                    # print("Boundary curves :", len(boundaryCurves))
-                    if len(boundaryCurves) > 0 :
-                        isFaceSelected = EvaluateFace(face,aShape)
+                    isFaceSelected = EvaluateFace(face,aShape)
                         
                 if isFaceSelected == True:
-                    faceCount = faceCount + 1
+                    nHoles = nHoles + 1
                     colors.append(cylinderColor)
                 else:
                     colors.append(parentColor[0])
         
-        print("face count :", faceCount)
+        print("Holes Found :", nHoles)
         obj.ViewObject.DiffuseColor = colors
