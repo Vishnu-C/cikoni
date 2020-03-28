@@ -75,26 +75,31 @@ def EvaluateHole(aFace, aShape):
     else: # could be a sectioned cylinder
         # If neighbour faces are also cylinder
         # it is a hole
+        aSurf = aFace.Surface
         edges = aFace.Edges
+        nCount = 0
         for edge in edges:
-            faces = AskFacesFromEdge(edge, aShape)
-            for face in faces:
-                if face.isSame(aFace):
+            commonfaces = AskFacesFromEdge(edge, aShape)
+            for cface in commonfaces:
+                if cface.isSame(aFace):
                     continue
-                surf = face.Surface
-                if (str(surf) in "<Cylinder object>"):
-                    aSurf = aFace.Surface
-                    if aSurf.Axis.isEqual(surf.Axis,1E-3) == True:
+                cSurf = cface.Surface
+                if (str(cSurf) in "<Cylinder object>"):
+                    if aSurf.Center.distanceToPoint(cSurf.Center) < 1E-3:
+                        nCount = nCount + 1
                         isFound = False
                         for hf in holeFaces:
-                            if hf.isEqual(face) == True:
+                            if hf.isEqual(cface) == True:
                                 isFound = True
                         if isFound == False:
-                            holeFaces.append(face)
-        if len(holeFaces) > 0:
+                            holeFaces.append(cface)
+        
+        if len(holeFaces) > 0:         
             holeFaces.append(aFace)
-            # print("Sectioned cylinder with ", len(holeFaces))
             isHole = True
+        else:
+            isHole = False
+    
     
     if isHole == False:
         return holeFaces
@@ -114,8 +119,6 @@ def EvaluateHole(aFace, aShape):
     else:
         centerList.append(aFace.Surface.Center)
         axisList.append(aFace.Surface.Axis)
-    print("centerList :",centerList)
-    print("axisList :",axisList)
     
     # line intersection with the shape
     # line passes through centers
@@ -197,7 +200,7 @@ def EvaluateHole(aFace, aShape):
             vec2 = pnts[2] - pnts[1]
             vec2.normalize()
             crossProd = vec1.cross(vec2)
-            print("Cross prod :", crossProd)
+            # print("Cross prod :", crossProd)
             if crossProd.Length < 1E-3:
                 line=Part.makeLine(pnts[1],avgCenter)
                 intersect = aShape.common(line)
@@ -357,7 +360,6 @@ for obj in objects:
                     elif(l_by_d >= 8.0):
                         nholes_l_d_great_8 = nholes_l_d_great_8 + 1
                 
-        print("Holes :", allHoles)
         print("Holes Found :", len(allHoles))
         obj.ViewObject.DiffuseColor = colors
         
