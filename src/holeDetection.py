@@ -1,5 +1,6 @@
 import copy
 import FreeCAD
+from FreeCAD import Base
 import FreeCADGui
 import Part
 
@@ -52,6 +53,11 @@ def EvaluateHole(aFace, aShape):
     centerList = []
     axisList = []
     holeFaces = []
+    bIsClosedCurve = False
+    
+    # 1 check
+    # if the boundary edge is closed, the face is a hole 
+    nClosedCurve = 0
     for edge in edges:
         curve = edge.Curve
         if(IsClosedCurve(edge)):
@@ -68,13 +74,18 @@ def EvaluateHole(aFace, aShape):
             axisList.append(axis)
             centerList.append(center)
             isHole = True
+            bIsClosedCurve = True
+            nClosedCurve = nClosedCurve + 1
+            
     
+    print("Check 1: ", isHole)
     if isHole == True:
         holeFaces.append(aFace)
-    
-    else: # could be a sectioned cylinder
-        # If neighbour faces are also cylinder
-        # it is a hole
+        
+    # 2 check
+    # could be a sectioned cylinder
+    # If neighbour faces are also cylinder it is a hole
+    else: 
         aSurf = aFace.Surface
         edges = aFace.Edges
         nCount = 0
@@ -107,7 +118,8 @@ def EvaluateHole(aFace, aShape):
     if len(centerList) > 0:
         # filter unique centers
         centerListCopy = copy.deepcopy(centerList)
-        centerList.clear()
+        # centerList.clear()
+        del centerList[:]
         for cc in centerListCopy:
             found = False
             for c in centerList:
@@ -120,11 +132,14 @@ def EvaluateHole(aFace, aShape):
         centerList.append(aFace.Surface.Center)
         axisList.append(aFace.Surface.Axis)
     
+    print("Check 2: ", isHole)
+    
+    # 3 check
     # line intersection with the shape
     # line passes through centers
     # length of line is shape diagonal
+    # if line does not intersect, the face is a hole
     
-    # estimating shape diagonals from bounding box
     lineLength = aShape.BoundBox.DiagonalLength
     
     holeCenter = FreeCAD.Vector(0,0,0)
@@ -164,9 +179,11 @@ def EvaluateHole(aFace, aShape):
     nLeft = 0
     nRight = 0
     avgCenter = FreeCAD.Vector(0,0,0)
+    print('Center list ', centerList)
     for c in centerList:
         avgCenter = avgCenter + c
-    avgCenter = avgCenter / len(centerList)
+    avgCenter = avgCenter.multiply(1.0/len(centerList))
+    print('Avg Center  ', avgCenter)
     
     interPoints = []
     for inVert in intersect.Vertexes:
@@ -185,14 +202,20 @@ def EvaluateHole(aFace, aShape):
         if(nLeft > 0 and nRight > 0): 
             # intersect happened both sides
             # propably a closed tube
-            print("Closed tube")
-            holeFaces.clear()
+            # holeFaces.clear()
+            del holeFaces[:]
             isHole = False
+            return holeFaces
     else:
         isHole = True
     
+    print("Check 3: ", isHole)
+    
+    # check 4
+    # see if it is fillet
     if isHole == True:
         edges = aFace.Edges
+        center = aFace.Surface.Center
         for edge in edges:
             pnts = edge.discretize(3)
             vec1 = pnts[0] - pnts[1]
@@ -202,12 +225,49 @@ def EvaluateHole(aFace, aShape):
             crossProd = vec1.cross(vec2)
             # print("Cross prod :", crossProd)
             if crossProd.Length < 1E-3:
-                line=Part.makeLine(pnts[1],avgCenter)
+                line=Part.makeLine(pnts[1],center)
                 intersect = aShape.common(line)
                 if len(intersect.Vertexes) > 0:
-                    holeFaces.clear()
+                    # holeFaces.clear()
+                    del holeFaces[:]
+                    isHole = False
+                    return holeFaces
+    
+    print("Check 4: ", isHole)
+    
+    # check 5
+    # see if it is fillet
+    # draw a circle at the center and discritize to points
+    # if all points intersect, the face is a hole 
+    if isHole == True:
+        holeCenter = FreeCAD.Vector(0,0,0)
+        for h in holeFaces:
+            center = h.CenterOfMass
+            holeCenter = holeCenter + center
+        holeCenter = holeCenter/len(holeFaces)
+        radius = aFace.Surface.Radius
+        axis = aFace.Surface.Axis        
+        
+        ccircle = Part.makeCircle(radius*1.1, Base.Vector(holeCenter.x,holeCenter.y,holeCenter.z), Base.Vector(axis.x,axis.y,axis.z))
+        nPnts = 10
+        circPnts = ccircle.discretize(nPnts)
+        print("circPnts : ",circPnts)
+        # Part.show(ccircle)
+        for c in range(0,nPnts):
+            next = c + 1
+            if next >= nPnts:
+                next = 0      
+            if circPnts[c].distanceToPoint(circPnts[next]) > 1E-3:
+                aLine = Part.makeLine(circPnts[c],circPnts[next])
+                Part.show(aLine)
+                # print("Circe segment ",c)
+                intersect = aShape.common(aLine)
+                if len(intersect.Vertexes) == 0:
+                    del holeFaces[:]
                     isHole = False
                     break
+    
+    print("Check 5: ", isHole)
     
     return holeFaces
 
@@ -325,7 +385,7 @@ for obj in objects:
                         if(len(holeFaces) > 0):
                             isHole = True
                             allHoles.append(holeFaces)
-                            # print("Evaluated hole faces ", holeFaces)
+                            print("Evaluated hole faces ", holeFaces)
                 
                 holeColor = 'green'
                 if isHole == True:
