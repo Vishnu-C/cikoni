@@ -46,130 +46,141 @@ def AskFacesFromEdge(iEdge, iShape):
     
     return selFaces
 
+# Groups split cylinder boundary into edge sets 
+# Every edge set represents the boundary of cylinder
+def GroupEdgeSets(holeFaces):
+    edgeSets = []
+    allEdges = []
+    for face in holeFaces:
+        # Part.show(face)
+        if (str(face.Surface) in "<Cylinder object>"):
+            edges = face.Edges
+            for edge in edges:
+                isPresent = False
+                for allEdge in allEdges:
+                    if edge.isSame(allEdge):
+                        isPresent = True
+                if isPresent == False:
+                    pnts =  edge.discretize(3)
+                    vec1 = pnts[0] - pnts[1]
+                    vec2 = pnts[2] - pnts[1]
+                    v1CrossV2 = vec1.cross(vec2)
+                    if v1CrossV2.Length > 1E-3: # not coliner
+                        allEdges.append(edge)
+    
+    sortedEdges =  Part.sortEdges(allEdges)
+    # print("Sorted edges :",sortedEdges)
+    edgeGroups = []
+    for ses in sortedEdges:
+        checkEdge = ses[0]
+        for eIdx in range (1,len(ses)):
+            currEdge = ses[eIdx]
+            checkVerts = checkEdge.Vertexes
+            currVerts = currEdge.Vertexes
+            if(checkVerts[0].Point.distanceToPoint(currVerts[0].Point) < 1E-3 or checkVerts[0].Point.distanceToPoint(currVerts[1].Point) < 1E-3):
+                if(checkVerts[1].Point.distanceToPoint(currVerts[0].Point) < 1E-3 or checkVerts[1].Point.distanceToPoint(currVerts[1].Point) < 1E-3):
+                    edgeGroups.append(ses)
+    # print("Edge groups :",edgeGroups)
+    return edgeGroups
+
+
+
 def EvaluateHole(aFace, aShape):
     isHole = False
     edges = aFace.Edges
-    curves = []
-    centerList = []
+    holeCenter = FreeCAD.Vector(0.0,0.0,0.0)
+    holeAxis = FreeCAD.Vector(0.0,0.0,0.0)
     axisList = []
     holeFaces = []
-    bIsClosedCurve = False
+    boundaryEdges = []
     
     # 1 check
-    # if the boundary edge is closed, the face is a hole 
-    nClosedCurve = 0
+    # if the boundary edge is closed, the face is a hole
+    bIsClosedCurve = False
     for edge in edges:
         curve = edge.Curve
         if(IsClosedCurve(edge)):
-            # print("Is closed curve true")
-            curves.append(curve)
-            center = FreeCAD.Vector(0,0,0)
-            axis = FreeCAD.Vector(1,0,0)
-            if "BSpline" in str(curve):
-                center = GetCenterOfBspline(curve)
-                axis = GetAxisOfBspline(curve)
-            else:
-                center = curve.centerOfCurvature(0)
-                axis = curve.Axis
-            axisList.append(axis)
-            centerList.append(center)
-            isHole = True
             bIsClosedCurve = True
-            nClosedCurve = nClosedCurve + 1
-            
-    
-    print("Check 1: ", isHole)
-    if isHole == True:
-        holeFaces.append(aFace)
-        
+            holeCenter = aFace.CenterOfMass
+            holeAxis = aFace.Surface.Axis
+            isHole = True
+            holeFaces.append(aFace)
+            break
+ 
     # 2 check
     # could be a sectioned cylinder
-    # If neighbour faces are also cylinder it is a hole
-    else: 
+    # Collect group of faces contributing to hole
+    if bIsClosedCurve == False and isHole == False: 
         aSurf = aFace.Surface
         edges = aFace.Edges
-        nCount = 0
         for edge in edges:
             commonfaces = AskFacesFromEdge(edge, aShape)
             for cface in commonfaces:
-                if cface.isSame(aFace):
-                    continue
                 cSurf = cface.Surface
                 if (str(cSurf) in "<Cylinder object>"):
-                    if aSurf.Center.distanceToPoint(cSurf.Center) < 1E-3:
-                        nCount = nCount + 1
-                        isFound = False
+                    if aFace.Surface.Center.distanceToPoint(cface.Surface.Center) < 1E-3:
+                        isAdded = False
                         for hf in holeFaces:
                             if hf.isEqual(cface) == True:
-                                isFound = True
-                        if isFound == False:
+                                isAdded = True
+                        if isAdded == False:
                             holeFaces.append(cface)
         
-        if len(holeFaces) > 0:         
-            holeFaces.append(aFace)
-            isHole = True
+        if len(holeFaces) > 0:
+            holeAxis = FreeCAD.Vector(0,0,0)
+            for hf in holeFaces:
+                holeAxis = holeAxis + hf.Surface.Axis
+            holeAxis = holeAxis/len(holeFaces)
         else:
-            isHole = False
+            print("Cannot find hole faces")
+            return holeFaces
     
+        boundaryEdges =  GroupEdgeSets(holeFaces)
+        holeCenter = FreeCAD.Vector(0,0,0)
+        if len(boundaryEdges) > 0:
+            for eg in boundaryEdges:
+                edgeSetPoints = []
+                nPoints = 10
+                totalArcLen = 0.0
+                for tedge in eg:
+                    disPoints = tedge.discretize(nPoints)
+                    edgeSetPoints.extend(disPoints)
+                pntCenter = FreeCAD.Vector(0,0,0)
+                for pnt in edgeSetPoints:
+                    pntCenter = pntCenter + pnt
+                pntCenter = pntCenter / len(edgeSetPoints)
+                holeCenter = holeCenter + pntCenter
+            holeCenter = holeCenter / len(boundaryEdges)
+            # sp = Part.makeSphere(0.1,Base.Vector(holeCenter.x,holeCenter.y,holeCenter.z))
+            # Part.show(sp)
+            isHole = True
     
     if isHole == False:
+        print("check 2 : Not a hole ")
+        del holeFaces[:]
         return holeFaces
-    
-    if len(centerList) > 0:
-        # filter unique centers
-        centerListCopy = copy.deepcopy(centerList)
-        # centerList.clear()
-        del centerList[:]
-        for cc in centerListCopy:
-            found = False
-            for c in centerList:
-                if cc.distanceToPoint(c) < 1E-3:
-                    found = True
-                    break
-            if found == False :
-                centerList.append(cc)
-    else:
-        centerList.append(aFace.Surface.Center)
-        axisList.append(aFace.Surface.Axis)
-    
-    print("Check 2: ", isHole)
     
     # 3 check
     # line intersection with the shape
-    # line passes through centers
-    # length of line is shape diagonal
+    # line passes through hole center
+    # length of line is holeFaces diagonal
     # if line does not intersect, the face is a hole
     
     lineLength = aShape.BoundBox.DiagonalLength
-    
-    holeCenter = FreeCAD.Vector(0,0,0)
-    for c in centerList:
-        holeCenter = c.add(holeCenter)
-    holeCenter.multiply(1.0/len(centerList))
-    
-    holeAxis = FreeCAD.Vector(0,0,0)
-    for a  in axisList:
-        holeAxis = a.add(holeAxis)
-    holeAxis.multiply(1.0/len(axisList))
+    faceBB = FreeCAD.BoundBox(0.0,0.0,0.0,0.0,0.0,0.0)
+    for hf in holeFaces:
+        hfBB = hf.BoundBox
+        faceBB.add(hfBB)
+    lineLength = faceBB.DiagonalLength
     
     p1 = FreeCAD.Vector(0,0,0)
     p2 = FreeCAD.Vector(0,0,0)
-    if(len(centerList) > 1):
-        vecP12 = centerList[1] - centerList[0]
-        vecP12.normalize()
-        p1 = centerList[0] - vecP12.multiply(lineLength)
-        
-        vecP12 = centerList[1] - centerList[0]
-        vecP12.normalize()
-        p2 = centerList[1] + vecP12.multiply(lineLength)
-    
-    else:
-        aVec = axisList[0]
-        aVec.normalize()
-        p1 = centerList[0] - aVec.multiply(lineLength)
-        aVec = axisList[0]
-        aVec.normalize()
-        p2 = centerList[0] + aVec.multiply(lineLength)
+    aVec = holeAxis
+    aVec.normalize()
+    p1 = holeCenter - aVec.multiply(lineLength)
+    aVec = holeAxis
+    aVec.normalize()
+    p2 = holeCenter + aVec.multiply(lineLength)
     
     line=Part.makeLine(p1,p2)
     # Part.show(line)
@@ -178,22 +189,17 @@ def EvaluateHole(aFace, aShape):
     intersect = aShape.common(line)
     nLeft = 0
     nRight = 0
-    avgCenter = FreeCAD.Vector(0,0,0)
-    print('Center list ', centerList)
-    for c in centerList:
-        avgCenter = avgCenter + c
-    avgCenter = avgCenter.multiply(1.0/len(centerList))
-    print('Avg Center  ', avgCenter)
     
     interPoints = []
     for inVert in intersect.Vertexes:
         point = inVert.Point
         interPoints.append(point)
     
+    isHole = True
     if len(interPoints) > 0:
-        dir = interPoints[0] - avgCenter
+        dir = interPoints[0] - holeCenter
         for intPnt in interPoints:
-            vec = intPnt - avgCenter
+            vec = intPnt - holeCenter
             if vec.dot(dir) < 0.0:
                 nLeft = nLeft + 1
             else:
@@ -202,81 +208,69 @@ def EvaluateHole(aFace, aShape):
         if(nLeft > 0 and nRight > 0): 
             # intersect happened both sides
             # propably a closed tube
-            # holeFaces.clear()
-            del holeFaces[:]
             isHole = False
-            return holeFaces
-    else:
-        isHole = True
     
-    print("Check 3: ", isHole)
+    if isHole == False:
+        print("check 3 : Not a hole ")
+        del holeFaces[:]
+        return holeFaces
+    radius = aFace.Surface.Radius
+    nPnts = 10
     
     # check 4
-    # see if it is fillet
-    if isHole == True:
-        edges = aFace.Edges
-        center = aFace.Surface.Center
-        for edge in edges:
-            pnts = edge.discretize(3)
-            vec1 = pnts[0] - pnts[1]
-            vec1.normalize()
-            vec2 = pnts[2] - pnts[1]
-            vec2.normalize()
-            crossProd = vec1.cross(vec2)
-            # print("Cross prod :", crossProd)
-            if crossProd.Length < 1E-3:
-                line=Part.makeLine(pnts[1],center)
-                intersect = aShape.common(line)
-                if len(intersect.Vertexes) > 0:
-                    # holeFaces.clear()
-                    del holeFaces[:]
-                    isHole = False
-                    return holeFaces
-    
-    print("Check 4: ", isHole)
+    # Eliminate outer faces 
+    if bIsClosedCurve == False:    
+        isHole = True
+        boundaryVert =  boundaryEdges[0][0].Vertexes[0]
+        cLine = Part.makeLine(holeCenter,boundaryVert.Point)
+        # Part.show(cLine)
+        cIntersect = aShape.common(cLine)
+        if len(cIntersect.Vertexes) > 0:
+            isHole = False
+        
+        if isHole == False:
+            print("check 4 : Not a hole ")
+            del holeFaces[:]
+            return holeFaces
     
     # check 5
     # see if it is fillet
     # draw a circle at the center and discritize to points
     # if all points intersect, the face is a hole 
-    if isHole == True:
-        holeCenter = FreeCAD.Vector(0,0,0)
-        for h in holeFaces:
-            center = h.CenterOfMass
-            holeCenter = holeCenter + center
-        holeCenter = holeCenter/len(holeFaces)
+    if bIsClosedCurve == False:             
         radius = aFace.Surface.Radius
-        axis = aFace.Surface.Axis        
-        
-        ccircle = Part.makeCircle(radius*1.1, Base.Vector(holeCenter.x,holeCenter.y,holeCenter.z), Base.Vector(axis.x,axis.y,axis.z))
         nPnts = 10
-        circPnts = ccircle.discretize(nPnts)
-        print("circPnts : ",circPnts)
+        bcircle = Part.makeCircle(radius*1.01, Base.Vector(holeCenter.x,holeCenter.y,holeCenter.z), Base.Vector(holeAxis.x,holeAxis.y,holeAxis.z))
+        bcircPnts = bcircle.discretize(nPnts)
+        # print("circPnts : ",circPnts)
         # Part.show(ccircle)
+        isHole = True
         for c in range(0,nPnts):
             next = c + 1
             if next >= nPnts:
                 next = 0      
-            if circPnts[c].distanceToPoint(circPnts[next]) > 1E-3:
-                aLine = Part.makeLine(circPnts[c],circPnts[next])
-                Part.show(aLine)
+            if bcircPnts[c].distanceToPoint(bcircPnts[next]) > 1E-3:
+                aLine = Part.makeLine(bcircPnts[c],bcircPnts[next])
+                # Part.show(aLine)
                 # print("Circe segment ",c)
                 intersect = aShape.common(aLine)
                 if len(intersect.Vertexes) == 0:
-                    del holeFaces[:]
                     isHole = False
-                    break
+            if isHole == False:
+                break
     
-    print("Check 5: ", isHole)
+        if isHole == False:
+            print("check 5 : Not a hole ")
+            del holeFaces[:]
+            return holeFaces
     
     return holeFaces
 
-def ComputeHoleParameters(holeFace):
-    holeSurf = holeFace.Surface
+def ComputeHoleParameters(holeFaces):
     
     # Length
     centerList = []
-    edges = face.Edges
+    edges = holeFaces[0].Edges
     for edge in edges:
         curve = edge.Curve
         if(IsClosedCurve(edge)):
@@ -287,17 +281,22 @@ def ComputeHoleParameters(holeFace):
                 center = curve.centerOfCurvature(0)
             centerList.append(center)
     
-    length = holeFace.Length
+    length = holeFaces[0].Length
     if len(centerList) > 1:
         length = (centerList[1] - centerList[0]).Length
-        
     # print("Length : " ,length)
     
     # Radius
-    radius = holeSurf.Radius
+    radius = holeFaces[0].Surface.Radius
     # print("Radius : " ,radius)
     
-    return length, radius*2.0
+    # Center
+    center = FreeCAD.Vector(0,0,0)
+    for hf in holeFaces:
+        center = center + hf.CenterOfMass
+    center = center / len(holeFaces)
+    
+    return length, radius*2.0, center
 
 def IsRightIncrement(diameter):
     number_dec = diameter%1.0
@@ -336,6 +335,14 @@ def GetHoleColor(is_grt_2,is_right_increment,l_by_d):
     
     return colors[selectedColorIdx]
 
+def GetHoleFaceIdx(aFace, allHoles):
+    for h in range (0,len(allHoles)):
+        hFaces = allHoles[h]
+        for hFace in hFaces:
+            if aFace.isEqual(hFace):
+                return h
+    return -1
+
 
 # get the active document
 doc = FreeCAD.ActiveDocument
@@ -352,30 +359,32 @@ nholes_l_d_lessEq_5 = 0 # number of holes l/d <= 5.0
 nholes_l_d_between_5_8 = 0 # number of holes 5.0 < l/d < 8.0
 nholes_l_d_great_8 = 0 # number of holes l/d >= 8.0
 HoleParams = []
-color_dict = {'green':(0.0,1.0,0.0), "yellow":(1.0,1.0,0.0), "orange":(1.0,0.647,0.0)}
+color_dict = {'green':(0.0,1.0,0.0), 'yellow':(1.0,1.0,0.0), 'orange':(1.0,0.647,0.0)}
 
 # loop thorugh all objects
 for obj in objects:
     if("Part::PartFeature" in str(obj)):
         parentColor = obj.ViewObject.DiffuseColor
-        colors = []
         aShape = obj.Shape
         aShape.removeSplitter()
         shapeType = aShape.ShapeType
         allHoles = []
         if(shapeType == 'Solid'): # only for solid
+            # Find hole faces 
             faces = aShape.Faces
+            # face = faces[6]
             for face in faces: 
                 isHole = False
                 isEvaluatedBefore = False
                 # make sure the face is not already detected as hole
-                for fHole in allHoles:
-                    for hFace in fHole:
+                for hFaces in allHoles:
+                    for hFace in hFaces:
                         if face.isEqual(hFace):
                             isHole = True
                             isEvaluatedBefore = True
+                            break
                 
-                if isEvaluatedBefore == False:                
+                if isEvaluatedBefore == False:                  
                     holeFaces = []
                     surf = face.Surface
                     wires = face.Wires
@@ -385,64 +394,72 @@ for obj in objects:
                         if(len(holeFaces) > 0):
                             isHole = True
                             allHoles.append(holeFaces)
-                            print("Evaluated hole faces ", holeFaces)
+            print("Number of holes found : ", len(allHoles))
+            
+            # Hole parameters for the report 
+            for aHole in allHoles:
+                length, diameter , holeCenter= ComputeHoleParameters(aHole)
+                l_by_d = length/diameter
+                is_grt_2 =  True if diameter > 2.0 else False
+                is_right_increment = IsRightIncrement(diameter)
+                holeColor = GetHoleColor(is_grt_2,is_right_increment,l_by_d)
+                HoleParams.append([length,diameter,holeCenter,is_right_increment,holeColor])
                 
-                holeColor = 'green'
-                if isHole == True:
-                    length, diameter = ComputeHoleParameters(face)
-                    l_by_d = length/diameter
-                    is_grt_2 =  True if diameter > 2.0 else False
-                    is_right_increment = IsRightIncrement(diameter)
-                    holeColor = GetHoleColor(is_grt_2,is_right_increment,l_by_d)
-                    # print("Hole color :", holeColor)
-                    colors.append(color_dict.get(holeColor))
+                nHoles = nHoles + 1
+                if (holeColor == 'green'):
+                    nGreen = nGreen + 1 
+                elif (holeColor == 'yellow'):
+                    nYellow = nYellow + 1
+                elif (holeColor == 'orange'):
+                    nOrange = nOrange + 1
+                if (is_right_increment == False):
+                    nOffStandard = nOffStandard + 1
+                if(l_by_d <= 5.0):
+                    nholes_l_d_lessEq_5 = nholes_l_d_lessEq_5 + 1
+                elif(l_by_d > 5.0 and l_by_d < 8.0):
+                    nholes_l_d_between_5_8 = nholes_l_d_between_5_8 + 1
+                elif(l_by_d >= 8.0):
+                    nholes_l_d_great_8 = nholes_l_d_great_8 + 1
+            
+            # Set face color in FreeCAD Gui
+            colors = []
+            faces = aShape.Faces
+            for face in faces: 
+                idx = GetHoleFaceIdx(face,allHoles)
+                if idx != -1:
+                    hc = HoleParams[idx][4]
+                    colors.append(color_dict.get(hc))
                 else:
                     colors.append(parentColor[0])
-                    continue
-                
-                if isEvaluatedBefore == False:
-                    center = face.Surface.Center
-                    HoleParams.append([length,diameter,center,is_right_increment,holeColor])
-                    
-                    nHoles = nHoles + 1
-                    if (holeColor == 'green'):
-                        nGreen = nGreen + 1 
-                    elif (holeColor == 'yellow'):
-                        nYellow = nYellow + 1
-                    elif (holeColor == 'orange'):
-                        nOrange = nOrange + 1
-                    if (is_right_increment == False):
-                        nOffStandard = nOffStandard + 1
-                    if(l_by_d <= 5.0):
-                        nholes_l_d_lessEq_5 = nholes_l_d_lessEq_5 + 1
-                    elif(l_by_d > 5.0 and l_by_d < 8.0):
-                        nholes_l_d_between_5_8 = nholes_l_d_between_5_8 + 1
-                    elif(l_by_d >= 8.0):
-                        nholes_l_d_great_8 = nholes_l_d_great_8 + 1
-                
-        print("Holes Found :", len(allHoles))
-        obj.ViewObject.DiffuseColor = colors
+            
+            obj.ViewObject.DiffuseColor = colors
         
-        # write report
-        reportFile = "D:\\projects\\current\\freeCAD\\cikoni\\report.txt"
-        report = open(reportFile,"w")
-        report.write('Total number of holes: Nt = {}\n'.format(nHoles))
-        report.write('Number of green holes: Ng = {}\n'.format(nGreen))
-        report.write('Number of yellow holes: Ny = {}\n'.format(nYellow))
-        report.write('Number of orange holes: No = {}\n'.format(nOrange))
-        report.write('Number of holes with off-standard diameter: Nn = {}\n'.format(nOffStandard))
-        report.write('Number of holes with L <= 5d: L0 = {}\n'.format(nholes_l_d_lessEq_5))
-        report.write('Number of holes with 5d < L < 8d: L5 = {}\n'.format(nholes_l_d_between_5_8))
-        report.write('Number of holes with L > 8d: L8 = {}\n'.format(nholes_l_d_great_8))
-        report.write("\n")
-        report.write("Detected holes:\n")
-        h = 0
-        report.write("# Hole position (xyz) length_1 Diameter_1 L/D Y/N (right increment/std) hole_color\n")
-        for param in HoleParams:
-            center = param[2]
-            l_by_d = param[0] / param[1]
-            right_increment = 'Y' if param[3] else 'N'
-            line = '{} {} {} {} {} {} {} {} {}\n'.format(h,center.x, center.y, center.z, param[0], param[1], l_by_d, right_increment, param[4])
-            report.write(line)
-            h = h + 1
-        report.close() 
+            # write report
+            ### change location here
+            reportFile = "D:\\projects\\current\\freeCAD\\cikoni\\report_"+obj.Label+".txt"
+            ###
+            
+            report = open(reportFile,"w")
+            report.write('Name : {}\n'.format(obj.Label))
+            report.write('Total number of holes: Nt = {}\n'.format(nHoles))
+            report.write('Number of green holes: Ng = {}\n'.format(nGreen))
+            report.write('Number of yellow holes: Ny = {}\n'.format(nYellow))
+            report.write('Number of orange holes: No = {}\n'.format(nOrange))
+            report.write('Number of holes with off-standard diameter: Nn = {}\n'.format(nOffStandard))
+            report.write('Number of holes with L <= 5d: L0 = {}\n'.format(nholes_l_d_lessEq_5))
+            report.write('Number of holes with 5d < L < 8d: L5 = {}\n'.format(nholes_l_d_between_5_8))
+            report.write('Number of holes with L > 8d: L8 = {}\n'.format(nholes_l_d_great_8))
+            report.write("\n")
+            report.write("Detected holes:\n")
+            h = 0
+            report.write("# Hole position (xyz) length_1 Diameter_1 L/D Y/N (right increment/std) hole_color\n")
+            for param in HoleParams:
+                center = param[2]
+                l_by_d = param[0] / param[1]
+                right_increment = 'Y' if param[3] else 'N'
+                line = '{} {} {} {} {} {} {} {} {}\n'.format(h,center.x, center.y, center.z, param[0], param[1], l_by_d, right_increment, param[4])
+                report.write(line)
+                h = h + 1
+            report.close()
+        else:
+            print("Not a solid") 
