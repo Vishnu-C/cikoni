@@ -61,26 +61,66 @@ def GroupEdgeSets(holeFaces):
                     if edge.isSame(allEdge):
                         isPresent = True
                 if isPresent == False:
-                    pnts =  edge.discretize(3)
-                    vec1 = pnts[0] - pnts[1]
-                    vec2 = pnts[2] - pnts[1]
-                    v1CrossV2 = vec1.cross(vec2)
-                    if v1CrossV2.Length > 1E-3: # not coliner
+                    # check if it is a circle
+                    if(IsClosedCurve(edge) == True):
                         allEdges.append(edge)
+                    else:
+                        pnts =  edge.discretize(3)
+                        vec1 = pnts[0] - pnts[1]
+                        vec2 = pnts[2] - pnts[1]
+                        v1CrossV2 = vec1.cross(vec2)
+                        if v1CrossV2.Length > 1E-3: # not coliner
+                            allEdges.append(edge)
     
-    sortedEdges =  Part.sortEdges(allEdges)
+    sortedEdgeSets =  Part.sortEdges(allEdges)
+    
+    # for tses in sortedEdges:
+    #     for te in tses:
+    #         Part.show(te)
+    
+    radius = holeFaces[0].Surface.Radius
+    toll = radius*0.1
     # print("Sorted edges :",sortedEdges)
     edgeGroups = []
-    for ses in sortedEdges:
-        checkEdge = ses[0]
-        for eIdx in range (1,len(ses)):
-            currEdge = ses[eIdx]
-            checkVerts = checkEdge.Vertexes
-            currVerts = currEdge.Vertexes
-            if(checkVerts[0].Point.distanceToPoint(currVerts[0].Point) < 1E-3 or checkVerts[0].Point.distanceToPoint(currVerts[1].Point) < 1E-3):
-                if(checkVerts[1].Point.distanceToPoint(currVerts[0].Point) < 1E-3 or checkVerts[1].Point.distanceToPoint(currVerts[1].Point) < 1E-3):
-                    edgeGroups.append(ses)
-    # print("Edge groups :",edgeGroups)
+    for i in range(0,len(sortedEdgeSets)):
+        aEdgeSet = sortedEdgeSets[i]
+        bGrouped = False
+        if len(aEdgeSet) == 1:
+            checkEdge = aEdgeSet[0]
+            if(IsClosedCurve(checkEdge) == True):
+                bGrouped = True
+        elif len(aEdgeSet) == 2:
+            checkEdge1 = aEdgeSet[0]
+            checkVerts1 = checkEdge1.Vertexes
+            checkEdge2 = aEdgeSet[1]
+            checkVerts2 = checkEdge2.Vertexes
+            if(checkVerts1[0].Point.distanceToPoint(checkVerts2[0].Point) < toll or checkVerts1[0].Point.distanceToPoint(checkVerts2[1].Point) < toll):
+                if(checkVerts1[1].Point.distanceToPoint(checkVerts2[0].Point) < toll or checkVerts1[1].Point.distanceToPoint(checkVerts2[1].Point)):
+                    bGrouped = True
+        elif len(aEdgeSet) > 2:
+            for j in range (0,len(aEdgeSet)):
+                neighs = 0
+                checkEdge = aEdgeSet[j]
+                checkVerts = checkEdge.Vertexes
+                for k in range (0,len(aEdgeSet)):
+                    currEdge = aEdgeSet[k]
+                    if(checkEdge.isEqual(currEdge) == False):
+                        currVerts = currEdge.Vertexes
+                        if(checkVerts[0].Point.distanceToPoint(currVerts[0].Point) < toll or checkVerts[0].Point.distanceToPoint(currVerts[1].Point) < toll or checkVerts[1].Point.distanceToPoint(currVerts[0].Point) < toll or checkVerts[1].Point.distanceToPoint(currVerts[1].Point) < toll ):
+                            neighs = neighs + 1
+                if neighs > 1:
+                    bGrouped = True
+                else:
+                    bGrouped = False
+                    break
+        
+        if bGrouped == True:
+            edgeGroups.append(aEdgeSet)
+    
+    # for tses in edgeGroups:
+    #     for te in tses:
+    #         Part.show(te)
+    
     return edgeGroups
 
 
@@ -95,18 +135,21 @@ def EvaluateHole(aFace, aShape):
     boundaryEdges = []
     
     # 1 check
-    # if the boundary edge is closed, the face is a hole
-    bIsClosedCurve = False
+    # if the boundary edges are closed, the face is a hole
+    bIsClosedCurve = True
+    isHole = True
     for edge in edges:
         curve = edge.Curve
-        if(IsClosedCurve(edge)):
-            bIsClosedCurve = True
-            holeCenter = aFace.CenterOfMass
-            holeAxis = aFace.Surface.Axis
-            isHole = True
-            holeFaces.append(aFace)
+        if(IsClosedCurve(edge) == False):
+            # Part.show(edge)
+            bIsClosedCurve = False
+            isHole = False
             break
- 
+    if (bIsClosedCurve == True):
+        holeCenter = aFace.CenterOfMass
+        holeAxis = aFace.Surface.Axis
+        holeFaces.append(aFace)
+    
     # 2 check
     # could be a sectioned cylinder
     # Collect group of faces contributing to hole
@@ -134,10 +177,11 @@ def EvaluateHole(aFace, aShape):
         else:
             print("Cannot find hole faces")
             return holeFaces
-    
+        
+        isHole = False
         boundaryEdges =  GroupEdgeSets(holeFaces)
         holeCenter = FreeCAD.Vector(0,0,0)
-        if len(boundaryEdges) > 0:
+        if len(boundaryEdges) > 1:
             for eg in boundaryEdges:
                 edgeSetPoints = []
                 nPoints = 10
@@ -220,6 +264,7 @@ def EvaluateHole(aFace, aShape):
     # check 4
     # Eliminate outer faces 
     if bIsClosedCurve == False:    
+        print("check 4")
         isHole = True
         boundaryVert =  boundaryEdges[0][0].Vertexes[0]
         cLine = Part.makeLine(holeCenter,boundaryVert.Point)
@@ -233,36 +278,36 @@ def EvaluateHole(aFace, aShape):
             del holeFaces[:]
             return holeFaces
     
-    # check 5
-    # see if it is fillet
-    # draw a circle at the center and discritize to points
-    # if all points intersect, the face is a hole 
-    if bIsClosedCurve == False:             
-        radius = aFace.Surface.Radius
-        nPnts = 10
-        bcircle = Part.makeCircle(radius*1.01, Base.Vector(holeCenter.x,holeCenter.y,holeCenter.z), Base.Vector(holeAxis.x,holeAxis.y,holeAxis.z))
-        bcircPnts = bcircle.discretize(nPnts)
-        # print("circPnts : ",circPnts)
-        # Part.show(ccircle)
-        isHole = True
-        for c in range(0,nPnts):
-            next = c + 1
-            if next >= nPnts:
-                next = 0      
-            if bcircPnts[c].distanceToPoint(bcircPnts[next]) > 1E-3:
-                aLine = Part.makeLine(bcircPnts[c],bcircPnts[next])
-                # Part.show(aLine)
-                # print("Circe segment ",c)
-                intersect = aShape.common(aLine)
-                if len(intersect.Vertexes) == 0:
-                    isHole = False
-            if isHole == False:
-                break
+    # # check 5
+    # # see if it is fillet
+    # # draw a circle at the center and discritize to points
+    # # if all points intersect, the face is a hole 
+    # if bIsClosedCurve == False:             
+    #     radius = aFace.Surface.Radius
+    #     nPnts = 10
+    #     bcircle = Part.makeCircle(radius*1.01, Base.Vector(holeCenter.x,holeCenter.y,holeCenter.z), Base.Vector(holeAxis.x,holeAxis.y,holeAxis.z))
+    #     bcircPnts = bcircle.discretize(nPnts)
+    #     # print("circPnts : ",circPnts)
+    #     # Part.show(ccircle)
+    #     isHole = True
+    #     for c in range(0,nPnts):
+    #         next = c + 1
+    #         if next >= nPnts:
+    #             next = 0      
+    #         if bcircPnts[c].distanceToPoint(bcircPnts[next]) > 1E-3:
+    #             aLine = Part.makeLine(bcircPnts[c],bcircPnts[next])
+    #             Part.show(aLine)
+    #             # print("Circe segment ",c)
+    #             intersect = aShape.common(aLine)
+    #             if len(intersect.Vertexes) == 0:
+    #                 isHole = False
+    #         if isHole == False:
+    #             break
     
-        if isHole == False:
-            print("check 5 : Not a hole ")
-            del holeFaces[:]
-            return holeFaces
+    #     if isHole == False:
+    #         print("check 5 : Not a hole ")
+    #         del holeFaces[:]
+    #         return holeFaces
     
     return holeFaces
 
