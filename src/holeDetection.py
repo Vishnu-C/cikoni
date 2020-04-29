@@ -74,16 +74,44 @@ def GroupEdgeSets(holeFaces):
     
     sortedEdgeSets =  Part.sortEdges(allEdges)
     
-    # for tses in sortedEdges:
-    #     for te in tses:
-    #         Part.show(te)
+    filteredEdgeSets = sortedEdgeSets
+    if(len(filteredEdgeSets) > 2):
+        filteredEdgeSets = []
+        holeAxis = holeFaces[0].Surface.Axis
+        # filter edges ets not parallel to hole axis
+        nPoints = 10
+        for edgeSet in sortedEdgeSets:
+            bSelect = True
+            edgeSetPoints = []
+            for tedge in edgeSet:
+                disPoints = tedge.discretize(nPoints)
+                edgeSetPoints.extend(disPoints)
+            nPoints = len(edgeSetPoints)
+            idx1 = int(nPoints*0.25)
+            idx2 = int(nPoints*0.5)
+            idx3 = int(nPoints*0.75)
+            pnt1 = edgeSetPoints[idx1]
+            pnt2 = edgeSetPoints[idx2]
+            pnt3 = edgeSetPoints[idx3]
+            v1 = pnt1 - pnt2
+            v2 = pnt3 - pnt2
+            normal = v1.cross(v2)
+            normal.normalize()
+            # c,normal = fitPlaneLTSQ(npPoints)
+            fDot = abs(holeAxis.dot(normal))
+            if (fDot > 0.75):
+                filteredEdgeSets.append(edgeSet)
+        
+        # for tses in filteredEdgeSets:
+        #     for te in tses:
+        #         Part.show(te)
     
     radius = holeFaces[0].Surface.Radius
     toll = radius*0.1
     # print("Sorted edges :",sortedEdges)
     edgeGroups = []
-    for i in range(0,len(sortedEdgeSets)):
-        aEdgeSet = sortedEdgeSets[i]
+    for i in range(0,len(filteredEdgeSets)):
+        aEdgeSet = filteredEdgeSets[i]
         bGrouped = False
         if len(aEdgeSet) == 1:
             checkEdge = aEdgeSet[0]
@@ -263,8 +291,7 @@ def EvaluateHole(aFace, aShape):
     
     # check 4
     # Eliminate outer faces 
-    if bIsClosedCurve == False:    
-        print("check 4")
+    if bIsClosedCurve == False:
         isHole = True
         boundaryVert =  boundaryEdges[0][0].Vertexes[0]
         cLine = Part.makeLine(holeCenter,boundaryVert.Point)
@@ -313,35 +340,34 @@ def EvaluateHole(aFace, aShape):
 
 def ComputeHoleParameters(holeFaces):
     
-    # Length
-    centerList = []
-    edges = holeFaces[0].Edges
-    for edge in edges:
-        curve = edge.Curve
-        if(IsClosedCurve(edge)):
-            center = FreeCAD.Vector(0,0,0)
-            if "BSpline" in str(curve):
-                center = GetCenterOfBspline(curve)
-            else:
-                center = curve.centerOfCurvature(0)
-            centerList.append(center)
-    
-    length = holeFaces[0].Length
-    if len(centerList) > 1:
-        length = (centerList[1] - centerList[0]).Length
-    # print("Length : " ,length)
+    # Length and center
+    boundaryEdges =  GroupEdgeSets(holeFaces)
+    holeCenter = FreeCAD.Vector(0,0,0)
+    boundaryCenters = []
+    length = 0.0
+    if len(boundaryEdges) > 1:
+        for es in boundaryEdges:
+            edgeSetPoints = []
+            nPoints = 10
+            for tedge in es:
+                disPoints = tedge.discretize(nPoints)
+                edgeSetPoints.extend(disPoints)
+            pntCenter = FreeCAD.Vector(0,0,0)
+            for pnt in edgeSetPoints:
+                pntCenter = pntCenter + pnt
+            pntCenter = pntCenter / len(edgeSetPoints)
+            boundaryCenters.append(pntCenter)
+            holeCenter = holeCenter + pntCenter
+        holeCenter = holeCenter / len(boundaryEdges)
+        length = boundaryCenters[0].distanceToPoint(boundaryCenters[1])
+    if len(boundaryEdges) > 2:
+        length = holeFaces[0].Length
     
     # Radius
     radius = holeFaces[0].Surface.Radius
     # print("Radius : " ,radius)
     
-    # Center
-    center = FreeCAD.Vector(0,0,0)
-    for hf in holeFaces:
-        center = center + hf.CenterOfMass
-    center = center / len(holeFaces)
-    
-    return length, radius*2.0, center
+    return length, radius*2.0, holeCenter
 
 def IsRightIncrement(diameter):
     number_dec = diameter%1.0
@@ -502,7 +528,7 @@ for obj in objects:
                 center = param[2]
                 l_by_d = param[0] / param[1]
                 right_increment = 'Y' if param[3] else 'N'
-                line = '{} {} {} {} {} {} {} {} {}\n'.format(h,center.x, center.y, center.z, param[0], param[1], l_by_d, right_increment, param[4])
+                line = '{} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} {} {}\n'.format(h,round(center.x,2), round(center.y,2), round(center.z,2), round(param[0],2), round(param[1],2), round(l_by_d,2), right_increment, param[4])
                 report.write(line)
                 h = h + 1
             report.close()
