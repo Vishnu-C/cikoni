@@ -1,4 +1,5 @@
 import copy
+from datetime import datetime
 import FreeCAD
 from FreeCAD import Base
 import FreeCADGui
@@ -507,11 +508,13 @@ for obj in objects:
         
             # write report
             ### change location here
-            reportFile = "D:\\projects\\current\\freeCAD\\cikoni\\report_"+obj.Label+".txt"
+            reportFilePath = "D:/projects/current/freeCAD/cikoni/"
             ###
             
+            reportName = datetime.today().strftime('%Y%m%d')+"_"+obj.Label+"_report.txt"
+            reportFile = reportFilePath + reportName
             report = open(reportFile,"w")
-            report.write('Name : {}\n'.format(obj.Label))
+            report.write('Name : {}\n'.format(reportName))
             report.write('Total number of holes: Nt = {}\n'.format(nHoles))
             report.write('Number of green holes: Ng = {}\n'.format(nGreen))
             report.write('Number of yellow holes: Ny = {}\n'.format(nYellow))
