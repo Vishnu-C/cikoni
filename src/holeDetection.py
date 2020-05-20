@@ -5,6 +5,12 @@ from FreeCAD import Base
 import FreeCADGui
 import Part
 
+###
+bColorFaces = False
+bWriteReport = True
+reportFilePath = "D:/projects/current/freeCAD/cikoni/"
+###
+
 def IsClosedCurve(iEdge):
     param1 = iEdge.FirstParameter
     param2 = iEdge.LastParameter
@@ -493,47 +499,45 @@ for obj in objects:
                 elif(l_by_d >= 8.0):
                     nholes_l_d_great_8 = nholes_l_d_great_8 + 1
             
-            # Set face color in FreeCAD Gui
-            colors = []
-            faces = aShape.Faces
-            for face in faces: 
-                idx = GetHoleFaceIdx(face,allHoles)
-                if idx != -1:
-                    hc = HoleParams[idx][4]
-                    colors.append(color_dict.get(hc))
-                else:
-                    colors.append(parentColor[0])
+            if bColorFaces == True:
+                # Set face color in FreeCAD Gui
+                colors = []
+                faces = aShape.Faces
+                for face in faces: 
+                    idx = GetHoleFaceIdx(face,allHoles)
+                    if idx != -1:
+                        hc = HoleParams[idx][4]
+                        colors.append(color_dict.get(hc))
+                    else:
+                        colors.append(parentColor[0])
+                
+                obj.ViewObject.DiffuseColor = colors
             
-            obj.ViewObject.DiffuseColor = colors
-        
-            # write report
-            ### change location here
-            reportFilePath = "D:/projects/current/freeCAD/cikoni/"
-            ###
-            
-            reportName = datetime.today().strftime('%Y%m%d')+"_"+obj.Label+"_report.txt"
-            reportFile = reportFilePath + reportName
-            report = open(reportFile,"w")
-            report.write('Name : {}\n'.format(reportName))
-            report.write('Total number of holes: Nt = {}\n'.format(nHoles))
-            report.write('Number of green holes: Ng = {}\n'.format(nGreen))
-            report.write('Number of yellow holes: Ny = {}\n'.format(nYellow))
-            report.write('Number of orange holes: No = {}\n'.format(nOrange))
-            report.write('Number of holes with off-standard diameter: Nn = {}\n'.format(nOffStandard))
-            report.write('Number of holes with L <= 5d: L0 = {}\n'.format(nholes_l_d_lessEq_5))
-            report.write('Number of holes with 5d < L < 8d: L5 = {}\n'.format(nholes_l_d_between_5_8))
-            report.write('Number of holes with L > 8d: L8 = {}\n'.format(nholes_l_d_great_8))
-            report.write("\n")
-            report.write("Detected holes:\n")
-            h = 0
-            report.write("# Hole position (xyz) length_1 Diameter_1 L/D Y/N (right increment/std) hole_color\n")
-            for param in HoleParams:
-                center = param[2]
-                l_by_d = param[0] / param[1]
-                right_increment = 'Y' if param[3] else 'N'
-                line = '{} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} {} {}\n'.format(h,round(center.x,2), round(center.y,2), round(center.z,2), round(param[0],2), round(param[1],2), round(l_by_d,2), right_increment, param[4])
-                report.write(line)
-                h = h + 1
+            if bWriteReport == True:
+                # write report            
+                reportName = datetime.today().strftime('%Y%m%d')+"_"+obj.Label+"_report.txt"
+                reportFile = reportFilePath + reportName
+                report = open(reportFile,"w")
+                report.write('Name : {}\n'.format(reportName))
+                report.write('Total number of holes: Nt = {}\n'.format(nHoles))
+                report.write('Number of green holes: Ng = {}\n'.format(nGreen))
+                report.write('Number of yellow holes: Ny = {}\n'.format(nYellow))
+                report.write('Number of orange holes: No = {}\n'.format(nOrange))
+                report.write('Number of holes with off-standard diameter: Nn = {}\n'.format(nOffStandard))
+                report.write('Number of holes with L <= 5d: L0 = {}\n'.format(nholes_l_d_lessEq_5))
+                report.write('Number of holes with 5d < L < 8d: L5 = {}\n'.format(nholes_l_d_between_5_8))
+                report.write('Number of holes with L > 8d: L8 = {}\n'.format(nholes_l_d_great_8))
+                report.write("\n")
+                report.write("Detected holes:\n")
+                h = 0
+                report.write("# Hole position (xyz) length_1 Diameter_1 L/D Y/N (right increment/std) hole_color\n")
+                for param in HoleParams:
+                    center = param[2]
+                    l_by_d = param[0] / param[1]
+                    right_increment = 'Y' if param[3] else 'N'
+                    line = '{} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} {:.2f} {} {}\n'.format(h,round(center.x,2), round(center.y,2), round(center.z,2), round(param[0],2), round(param[1],2), round(l_by_d,2), right_increment, param[4])
+                    report.write(line)
+                    h = h + 1
             report.close()
         else:
             print("Not a solid") 
