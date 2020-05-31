@@ -10,6 +10,7 @@ bColorFaces = False
 bWriteReport = True
 reportFilePath = "D:/projects/current/freeCAD/cikoni/"
 ###
+threadRadius = [1.60,1.75,2.05,2.50,2.90,3.30,3.70,4.20,5.00,6.00,6.80,7.80,8.50,9.50,10.20,12.00,14.00,15.50]
 
 def IsClosedCurve(iEdge):
     param1 = iEdge.FirstParameter
@@ -421,6 +422,14 @@ def GetHoleFaceIdx(aFace, allHoles):
                 return h
     return -1
 
+def GetExpectedThreads(holeRadiusList):
+    nThreads = 0
+    for r in holeRadiusList:
+        for tr in threadRadius:
+            if abs(tr-r) < 1E-3:
+                nThreads = nThreads + 1
+    return nThreads
+
 
 # get the active document
 doc = FreeCAD.ActiveDocument
@@ -513,6 +522,9 @@ for obj in objects:
                 
                 obj.ViewObject.DiffuseColor = colors
             
+            radiusList = [radius[1] for radius in HoleParams]
+            nThreads = GetExpectedThreads(radiusList)
+            print("Nthreads :", nThreads)
             if bWriteReport == True:
                 # write report            
                 reportName = datetime.today().strftime('%Y%m%d')+"_"+obj.Label+"_report.txt"
@@ -520,6 +532,8 @@ for obj in objects:
                 report = open(reportFile,"w")
                 report.write('Name : {}\n'.format(reportName))
                 report.write('Total number of holes: Nt = {}\n'.format(nHoles))
+                report.write('Number of expected threads: Y = {}\n'.format(nThreads))
+                report.write('Number of standard holes: X = {}\n'.format(nHoles-nThreads))
                 report.write('Number of green holes: Ng = {}\n'.format(nGreen))
                 report.write('Number of yellow holes: Ny = {}\n'.format(nYellow))
                 report.write('Number of orange holes: No = {}\n'.format(nOrange))
