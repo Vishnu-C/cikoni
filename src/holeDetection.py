@@ -1,16 +1,37 @@
 import copy
 from datetime import datetime
-import FreeCAD
+import FreeCAD, Points, Part
 from FreeCAD import Base
 import FreeCADGui
 import Part
 
-###
+from numpy import ndarray, array, asarray, dot, cross, cov, array, finfo, min as npmin, max as npmax
+from numpy.linalg import eigh, norm
+import numpy as np
+from scipy.spatial import ConvexHull
+
+### Options
 bColorFaces = False
 bWriteReport = True
+bComputeOBB = True
+bShowMinimumBox = False
 reportFilePath = "D:/projects/current/freeCAD/cikoni/"
 ###
+
+### thread radius list
 threadRadius = [1.60,1.75,2.05,2.50,2.90,3.30,3.70,4.20,5.00,6.00,6.80,7.80,8.50,9.50,10.20,12.00,14.00,15.50]
+###
+
+### User defined values
+Ni = 1.0
+Csq = 1.0
+Ct = 1.0
+Cmm = 1.0
+Cmp = 1.0
+MaxXrange = 100.0
+MaxYrange = 100.0
+MaxZrange = 100.0
+###
 
 def IsClosedCurve(iEdge):
     param1 = iEdge.FirstParameter
@@ -430,6 +451,134 @@ def GetExpectedThreads(holeRadiusList):
                 nThreads = nThreads + 1
     return nThreads
 
+class OBB:
+    def __init__(self):
+        self.rotation = None
+        self.min = None
+        self.max = None
+    
+    def transform(self, point):
+        return dot(array(point), self.rotation)
+    
+    @property
+    def centroid(self):
+        return self.transform((self.min + self.max) / 2.0)
+    
+    @property
+    def extents(self):
+        return abs(self.transform((self.max - self.min) / 2.0))
+    
+    @property
+    def points(self):
+        return [
+
+            self.transform((self.max[0], self.max[1], self.min[2])),
+            self.transform((self.min[0], self.max[1], self.min[2])),
+            self.transform((self.min[0], self.max[1], self.max[2])),
+            self.transform(self.max),
+            self.transform(self.min),
+            self.transform((self.max[0], self.min[1], self.min[2])),
+            self.transform((self.max[0], self.min[1], self.max[2])),
+            self.transform((self.min[0], self.min[1], self.max[2])),
+        ]
+    
+    @classmethod
+    def build_from_covariance_matrix(cls, covariance_matrix, points):
+        if not isinstance(points, ndarray):
+            points = array(points, dtype=float)
+        assert points.shape[1] == 3
+        
+        obb = OBB()
+        _, eigen_vectors = eigh(covariance_matrix)
+        
+        def try_to_normalize(v):
+            n = norm(v)
+            if n < finfo(float).resolution:
+                raise ZeroDivisionError
+            return v / n
+        
+        r = try_to_normalize(eigen_vectors[:, 0])
+        u = try_to_normalize(eigen_vectors[:, 1])
+        f = try_to_normalize(eigen_vectors[:, 2])
+        
+        obb.rotation = array((r, u, f)).T
+        
+        # apply the rotation to all the position vectors of the array
+        p_primes = asarray([obb.rotation.dot(p) for p in points])
+        obb.min = npmin(p_primes, axis=0)
+        obb.max = npmax(p_primes, axis=0)
+        
+        return obb
+    
+    @classmethod
+    def build_from_points(cls, points):
+        if not isinstance(points, ndarray):
+            points = array(points, dtype=float)
+        assert points.shape[1] == 3, 'points have to have 3-elements'
+        # no need to store the covariance matrix
+        return OBB.build_from_covariance_matrix(cov(points, y=None, rowvar=0, bias=1), points)
+
+def FindHoles(shape):
+    faces = aShape.Faces
+    # face = faces[6]
+    for face in faces: 
+        isHole = False
+        isEvaluatedBefore = False
+        # make sure the face is not already detected as hole
+        for hFaces in allHoles:
+            for hFace in hFaces:
+                if face.isEqual(hFace):
+                    isHole = True
+                    isEvaluatedBefore = True
+                    break
+        
+        if isEvaluatedBefore == False:                  
+            holeFaces = []
+            surf = face.Surface
+            wires = face.Wires
+            nWires = len(wires)
+            if (str(surf) in "<Cylinder object>"):
+                holeFaces = EvaluateHole(face,aShape)
+                if(len(holeFaces) > 0):
+                    isHole = True
+                    allHoles.append(holeFaces)
+    return allHoles
+    print("Number of holes found : ", len(allHoles))
+
+def ComputeMinimumBBox(shape):
+    pnts,facets = shape.tessellate(1E-3)
+    points  = np.array(pnts)
+    
+    vectors = [FreeCAD.Vector(p)for p in points]
+    pts = Points.Points(vectors)
+    hull = ConvexHull(points)
+    faces = []
+    for i in hull.simplices:
+        wire = Part.makePolygon([FreeCAD.Vector(points[i[0]]),FreeCAD.Vector(points[i[1]]),FreeCAD.Vector(points[i[2]]),FreeCAD.Vector(points[i[0]])])
+        faces.append(Part.Face(wire))
+    shell = Part.makeShell(faces)
+    
+    hullpts = [points[i] for i in hull.vertices]
+    obb = OBB.build_from_points(points)
+    obbvec = [FreeCAD.Vector(p)for p in obb.points]
+    
+    faces = []
+    idx   = [[0,1,2,3,0],[4,5,6,7,4],[0,1,4,5,0],[2,3,6,7,2],[1,2,7,4,1],[0,5,6,3,0]]
+    for ix in idx:
+        wire = Part.makePolygon([obbvec[i] for i in ix])
+        faces.append(Part.Face(wire))
+    
+    shell = Part.makeShell(faces)
+    if bShowMinimumBox:
+        Part.show(shell)
+    
+    xaxis = obbvec[1]-obbvec[0]
+    yaxis = obbvec[3]-obbvec[0]
+    zaxis = obbvec[5]-obbvec[0]
+    xRange = xaxis.Length
+    yRange = yaxis.Length
+    zRange = zaxis.Length
+    return shell, xRange,yRange,zRange
 
 # get the active document
 doc = FreeCAD.ActiveDocument
@@ -447,6 +596,7 @@ nholes_l_d_between_5_8 = 0 # number of holes 5.0 < l/d < 8.0
 nholes_l_d_great_8 = 0 # number of holes l/d >= 8.0
 HoleParams = []
 color_dict = {'green':(0.0,1.0,0.0), 'yellow':(1.0,1.0,0.0), 'orange':(1.0,0.647,0.0)}
+bPartFixMBBox = True
 
 # loop thorugh all objects
 for obj in objects:
@@ -458,30 +608,16 @@ for obj in objects:
         allHoles = []
         if(shapeType == 'Solid'): # only for solid
             # Find hole faces 
-            faces = aShape.Faces
-            # face = faces[6]
-            for face in faces: 
-                isHole = False
-                isEvaluatedBefore = False
-                # make sure the face is not already detected as hole
-                for hFaces in allHoles:
-                    for hFace in hFaces:
-                        if face.isEqual(hFace):
-                            isHole = True
-                            isEvaluatedBefore = True
-                            break
-                
-                if isEvaluatedBefore == False:                  
-                    holeFaces = []
-                    surf = face.Surface
-                    wires = face.Wires
-                    nWires = len(wires)
-                    if (str(surf) in "<Cylinder object>"):
-                        holeFaces = EvaluateHole(face,aShape)
-                        if(len(holeFaces) > 0):
-                            isHole = True
-                            allHoles.append(holeFaces)
-            print("Number of holes found : ", len(allHoles))
+            allHoles = FindHoles(aShape)
+            # Volume
+            partVolume = aShape.Volume
+            # Area
+            partArea = aShape.Area
+            # Minimum boundary box 
+            bBox,xRange,yRange,zRange = ComputeMinimumBBox(aShape)
+            bboxVolume = bBox.Volume
+            if(xRange<MaxXrange or yRange<MaxYrange or zRange<MaxZrange):
+                bPartFixMBBox = False
             
             # Hole parameters for the report 
             for aHole in allHoles:
@@ -508,6 +644,11 @@ for obj in objects:
                 elif(l_by_d >= 8.0):
                     nholes_l_d_great_8 = nholes_l_d_great_8 + 1
             
+            radiusList = [radius[1] for radius in HoleParams]
+            nThreads = GetExpectedThreads(radiusList)
+            print("Nthreads :", nThreads)
+            
+            P = 45.0 + 0.98*((2.9675*Ni**0.755)*((1.0-(partVolume/bboxVolume))*0.4*(1.1*bboxVolume-partVolume)**0.4+(partVolume/bboxVolume)*0.2718*(3.0*partArea)**0.342*Csq*Ct))*Cmm+1.1*bboxVolume*Cmp*Ni+1.1*nGreen+1.5*nYellow+2.5*nOrange+3.2*nThreads  
             if bColorFaces == True:
                 # Set face color in FreeCAD Gui
                 colors = []
@@ -522,15 +663,21 @@ for obj in objects:
                 
                 obj.ViewObject.DiffuseColor = colors
             
-            radiusList = [radius[1] for radius in HoleParams]
-            nThreads = GetExpectedThreads(radiusList)
-            print("Nthreads :", nThreads)
             if bWriteReport == True:
                 # write report            
                 reportName = datetime.today().strftime('%Y%m%d')+"_"+obj.Label+"_report.txt"
                 reportFile = reportFilePath + reportName
                 report = open(reportFile,"w")
                 report.write('Name : {}\n'.format(reportName))
+                report.write('P function : P = {}\n'.format(P))
+                partFits = 'Y' if bPartFixMBBox else 'N'
+                report.write('Part fits in maximum part range: {}\n'.format(partFits))
+                report.write('Part Volume: Vp = {}\n'.format(partVolume))
+                report.write('Part Surface: As = {}\n'.format(partArea))
+                report.write('MINIMUM Bounding Box: VB = {}\n'.format(bboxVolume))
+                report.write('X range of part X = {}\n'.format(xRange))
+                report.write('Y range of part Y = {}\n'.format(yRange))
+                report.write('Z range of part Z = {}\n'.format(zRange))
                 report.write('Total number of holes: Nt = {}\n'.format(nHoles))
                 report.write('Number of expected threads: Y = {}\n'.format(nThreads))
                 report.write('Number of standard holes: X = {}\n'.format(nHoles-nThreads))
